@@ -157,6 +157,30 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # ==========================================
+  # 7. Natural Language Query Agent API
+  # ==========================================
+  agent-api:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: streamquery-agent-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DBT_HOST=postgres
+      - DBT_PORT=5432
+      - DBT_USER=${POSTGRES_USER:-postgres}
+      - DBT_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DBT_DATABASE=${WAREHOUSE_DB:-warehouse}
+      - LLM_PROVIDER=${LLM_PROVIDER:-auto}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   airflow-logs:
