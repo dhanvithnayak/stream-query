@@ -3,12 +3,19 @@ set -e
 
 echo "Running multi-database initialization script..."
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+PSQL_FLAGS="-v ON_ERROR_STOP=1"
+if [ -n "$POSTGRES_HOST" ]; then
+    PSQL_FLAGS="$PSQL_FLAGS -h $POSTGRES_HOST -p ${POSTGRES_PORT:-5432}"
+elif [ -n "$PGHOST" ]; then
+    PSQL_FLAGS="$PSQL_FLAGS -h $PGHOST -p ${PGPORT:-5432}"
+fi
+
+psql $PSQL_FLAGS --username "${POSTGRES_USER:-postgres}" --dbname "${POSTGRES_DB:-postgres}" <<-EOSQL
     SELECT 'CREATE DATABASE airflow' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'airflow')\gexec
     SELECT 'CREATE DATABASE warehouse' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'warehouse')\gexec
 EOSQL
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "warehouse" <<-EOSQL
+psql $PSQL_FLAGS --username "${POSTGRES_USER:-postgres}" --dbname "warehouse" <<-EOSQL
     CREATE SCHEMA IF NOT EXISTS raw;
     CREATE SCHEMA IF NOT EXISTS staging;
     CREATE SCHEMA IF NOT EXISTS analytics;

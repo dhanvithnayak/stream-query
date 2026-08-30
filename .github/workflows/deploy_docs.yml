@@ -57,9 +57,15 @@ jobs:
           pip install "dbt-core>=1.7.0,<1.9.0" "dbt-postgres>=1.7.0,<1.9.0" psycopg2-binary faker
 
       - name: Initialize Warehouse Database Schemas
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+          PGPASSWORD: postgres
         run: |
           chmod +x scripts/init_databases.sh
-          POSTGRES_USER=postgres POSTGRES_DB=postgres ./scripts/init_databases.sh
+          ./scripts/init_databases.sh
 
       - name: Seed Synthetic Order Events
         run: |
