@@ -1,0 +1,1 @@
+"""StreamQuery unit tests package."""

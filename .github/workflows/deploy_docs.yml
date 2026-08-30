@@ -1,0 +1,134 @@
+name: Deploy dbt Docs to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'dbt_project/**'
+      - '.github/workflows/deploy_docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Generate & Deploy dbt Docs
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install PostgreSQL client & dbt
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          python -m pip install --upgrade pip
+          pip install "dbt-core>=1.7.0,<1.9.0" "dbt-postgres>=1.7.0,<1.9.0" psycopg2-binary faker
+
+      - name: Initialize Warehouse Database Schemas
+        run: |
+          chmod +x scripts/init_databases.sh
+          POSTGRES_USER=postgres POSTGRES_DB=postgres ./scripts/init_databases.sh
+
+      - name: Seed Synthetic Order Events
+        run: |
+          python3 -c "
+          import psycopg2
+          from producer.produce_events import generate_order_event
+          conn = psycopg2.connect(host='localhost', port=5432, dbname='warehouse', user='postgres', password='postgres')
+          with conn.cursor() as cur:
+              for i in range(25):
+                  e = generate_order_event(order_seq=i+1)
+                  cur.execute('''
+                      INSERT INTO raw.orders (order_id, customer_id, customer_name, customer_email, product_id, product_name, category, quantity, unit_price, order_status, region, ordered_at)
+                      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      ON CONFLICT (order_id) DO NOTHING;
+                  ''', (e['order_id'], e['customer_id'], e['customer_name'], e['customer_email'], e['product_id'], e['product_name'], e['category'], e['quantity'], e['unit_price'], e['order_status'], e['region'], e['ordered_at']))
+          conn.commit()
+          conn.close()
+          print('Seeded 25 records into raw.orders')
+          "
+
+      - name: Run dbt Transformations & Generate Docs
+        env:
+          DBT_HOST: localhost
+          DBT_PORT: 5432
+          DBT_USER: postgres
+          DBT_PASSWORD: postgres
+          DBT_DATABASE: warehouse
+        run: |
+          dbt run --project-dir dbt_project --profiles-dir dbt_project
+          dbt test --project-dir dbt_project --profiles-dir dbt_project
+          dbt docs generate --project-dir dbt_project --profiles-dir dbt_project
+
+      - name: Package Static Documentation Site
+        run: |
+          mkdir -p public
+          cp dbt_project/target/index.html public/
+          cp dbt_project/target/manifest.json public/
+          cp dbt_project/target/catalog.json public/
+
+          # Also create self-contained single-file HTML for fallback compatibility
+          python3 -c "
+          import json, re
+
+          with open('public/index.html', 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          with open('public/manifest.json', 'r', encoding='utf-8') as f:
+              manifest = json.load(f)
+
+          with open('public/catalog.json', 'r', encoding='utf-8') as f:
+              catalog = json.load(f)
+
+          # Embed directly into dbt project load function if present
+          search_str = 'o=[i(\"manifest\",\"manifest.json\"+t),i(\"catalog\",\"catalog.json\"+t)]'
+          new_str = 'o=[{label: \"manifest\", data: ' + json.dumps(manifest) + '}, {label: \"catalog\", data: ' + json.dumps(catalog) + '}]'
+          if search_str in content:
+              content = content.replace(search_str, new_str)
+              with open('public/index.html', 'w', encoding='utf-8') as f:
+                  f.write(content)
+              print('Embedded manifest and catalog into index.html successfully')
+          else:
+              print('Standard multi-file index.html retained')
+          "
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

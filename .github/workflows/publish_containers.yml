@@ -1,0 +1,60 @@
+name: Publish Container Images to GHCR
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & Push GHCR Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Agent
+        id: meta-agent
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-agent
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push Agent Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agent
+          push: true
+          tags: ${{ steps.meta-agent.outputs.tags }}
+          labels: ${{ steps.meta-agent.outputs.labels }}
+
+      - name: Extract metadata for Producer
+        id: meta-producer
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-producer
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push Producer Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./producer
+          push: true
+          tags: ${{ steps.meta-producer.outputs.tags }}
+          labels: ${{ steps.meta-producer.outputs.labels }}
